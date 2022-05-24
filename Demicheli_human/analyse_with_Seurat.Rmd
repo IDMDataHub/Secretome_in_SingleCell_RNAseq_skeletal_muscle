@@ -1,0 +1,313 @@
+---
+title: "Analyse S.C.DeMicheli-human"
+author: "Maria Kondili"
+date:   "25/11/2021"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+```{r libraries }
+library(Seurat)
+suppressPackageStartupMessages(library(tidyverse))
+#BiocManager::install('romanhaa/cerebroApp')
+library(cerebroApp)
+#launchCerebro()
+
+```
+
+##### Read data
+
+```{r data, echo=TRUE,include=TRUE}
+##> rownames = 1 : In the rownames are given the gene-symbols
+
+work_dir <-"/shared/projects/single_cell_skeletal_muscle/DeMicheli/human/"
+
+raw_data <- read.table(paste0(work_dir,"GSE143704/DeMicheli_HumanMuscleAtlas_rawdata.txt"),sep="\t",header=TRUE,row.names=1)
+
+metadata <- read.table(paste0(work_dir,"GSE143704/DeMicheli_HumanMuscleAtlas_metadata.txt"),sep="\t",header=TRUE,row.names=1)
+
+metadata <- metadata[,c(1:6)]
+
+srat_data <- CreateSeuratObject(counts = raw_data,
+                                project = "human_muscle",
+                                meta.data= metadata,
+                                min.cells = 3,
+                                min.features = 200)
+
+# i:
+# min.cells= sets the threshold for genes to only take the genes that are present in at least a specified number of cells.
+# min.features= sets the thresholds for cells that express at least a specified number of genes.
+
+
+```
+
+Note : When reading ^MT- from raw data -> we get more than 40% of Percent_Mitochondrial genes --> The raw data is unfiltered, but the Info in Metadata is Filtered ,with MT% < 20%.
+
+```{r show_percent_mito_etc, echo=T,include=T}
+##> Use metadata for the  %Mitoch.genes
+## keep count per cell-type :
+
+counts_per_ct <- metadata %>% group_by(cell_annotation) %>% count()
+
+meta_percent_mito <- metadata$percent_mito
+names(meta_percent_mito) <- rownames(metadata)
+srat_data[["percent_mito"]]  <- meta_percent_mito
+srat_data[["percent_rbp"]]   <- PercentageFeatureSet(srat_data, pattern="^RP[SL]")
+srat_data[["percent_plt"]]   <- PercentageFeatureSet(srat_data, pattern = "^PPBP")
+
+VlnPlot(srat_data, features = c("nFeature_RNA",
+                                "nCount_RNA",
+                                "percent_mito",
+                                "percent_rbp",
+                                "percent_plt"), ncol = 5) +
+theme(plot.title = element_text(size=15))
+
+```
+
+But ,if we use the information of MT-genes from raw data we get :
+```{r with_Real_Mitoch_Percentage, echo=T,include=T}
+
+srat_data[["percent_mito"]]  <- PercentageFeatureSet(srat_data, pattern = "^MT-")
+
+VlnPlot(srat_data, features = c("nFeature_RNA",
+                                "nCount_RNA",
+                                "percent_mito",
+                                "percent_rbp",
+                                "percent_plt"), ncol = 5) +
+theme(plot.title = element_text(size=15))
+
+```
+
+##### FILTER data
+
+```{r filter_mito_genes,echo=T,include=T }
+
+FeatureScatter(srat_data, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+
+x <- subset(srat_data, percent_mito < 20)
+count_per_ct_x <- x@meta.data %>% group_by(cell_annotation) %>% count
+
+# Check : n1/n2 of 2 diff. counts per cell-type
+
+srat_data <- subset(srat_data, subset = nCount_RNA > 1000 & percent_mito < 20)
+##Could also use:  "& nFeature_RNA < 2500 "
+
+##--> verify mitoch_gene%
+VlnPlot(srat_data, features = c("nFeature_RNA", "nCount_RNA", "percent_mito", "percent_rbp","percent_plt"), ncol = 5) +
+         theme(plot.title = element_text(size=15))
+
+```
+
+##### Normalise
+
+```{r normalise,echo=T,include=T, message = FALSE}
+
+srat_data.norm <- NormalizeData(srat_data,
+                                normalization.method = "LogNormalize",
+                                scale.factor = 10000)
+
+
+srat_data.norm <- FindVariableFeatures(srat_data.norm,
+                                       selection.method = "vst",
+                                       nfeatures = 2000)
+srat_data.norm <- ScaleData(srat_data.norm)
+
+# devtools::install_github("krlmlr/ulimit")
+# setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE)
+# srat_data.norm <-  SCTransform(srat_data,verbose=TRUE) #--> cpu-time-limit kills the process !!!
+
+## also: mean.function = ExpMean
+
+top20 <- head(VariableFeatures(srat_data.norm), 20)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(srat_data.norm)
+
+LabelPoints(plot=plot1, points = top20, repel = TRUE, xnudge=0, ynudge=0)
+
+```
+
+##### Perform linear dimensional reduction
+
+```{r pca,echo=T,message=F}
+
+srat_data.norm <- RunPCA(srat_data.norm,
+                         features = VariableFeatures(object = srat_data.norm))
+
+ElbowPlot(srat_data.norm)
+
+DimPlot(srat_data.norm, reduction = "pca")
+
+```
+
+##### CLUSTER
+
+```{r cluster,echo=T,include=T }
+
+srat_data.norm <- FindNeighbors(srat_data.norm, dims = 1:30)
+
+srat_data.norm <- FindClusters(srat_data.norm, resolution = 0.4)
+
+##>Run non-linear dimensional reduction  
+srat_data.norm <- RunUMAP(srat_data.norm,
+                          dims = 1:30,
+                          n.components = 3L,
+                          verbose=TRUE)
+
+srat_data.norm %>% glimpse
+
+DimPlot(srat_data.norm, reduction = "umap",label=TRUE)
+
+```
+
+##### Annotation of clusters
+
+```{r define_clusters,echo=T,include=T}
+
+srat_data.norm <- SetIdent(srat_data.norm, value = "cell_annotation")
+
+Idents(srat_data.norm)[1:10]
+
+
+#####> If we want to define the cluster-names on our own :
+# srat_data.norm <- RenameIdents(object= srat_data.norm,
+#                                "0"= , "1"= , "2"=,..)
+
+DimPlot(object = srat_data.norm,
+        reduction="umap",  
+        pt.size = 0.5,
+        label.size = 3,label = TRUE,label.box = TRUE)+
+        theme(legend.position = "none")
+```
+
+
+```{r ditto_DimPlot}
+
+library(dittoSeq)
+
+dittoDimPlot(srat_data.norm,
+             var = "ident",
+             reduction.use = "umap",
+             do.label = T,
+             main="Human Muscle Clusters(DeMicheli)")
+# var :  	String name of a "gene" or "metadata"(eg."SCT_snn_res.0.4") to use for coloring the plots.
+
+```
+
+```{r gene_markers,echo=T,include=T}
+# muscle.markers <- FindAllMarkers(srat_data.norm,
+#                                  test.use = "wilcox",
+#                                  only.pos = T,
+#                                  min.pct = 0.25,
+#                                  logfc.threshold = 0.25,
+#                                  verbose = TRUE)
+
+##>replaced by :
+
+muscle.markers <- readRDS("../Seurat_Analysis/muscle_markers.rds") #( calculated in "analyse_norm_Data.Rmd")
+
+# muscle.markers %>% pull(cluster) %>% as.factor %>% levels
+# muscle.markers %>% group_by(cluster) %>% slice_max(n=2,order_by = avg_log2FC,with_ties=FALSE ) #n
+# = show this number of lines per cluster
+##> visualise per marker:
+##> RidgePlot, CellScatter, and DotPlot as additional methods to view your dataset
+cat("\nCurrent cluster ids = ", paste((muscle.markers$cluster %>% as.factor %>% levels),collapse="\n"))
+
+
+```
+
+
+###### Identify clusters by TOP-10 genes from Markers
+
+```{r group_by_heatmap, echo=T, eval=T}
+
+top10Up <- muscle.markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+DoHeatmap(srat_data.norm, features = top10Up$gene) + NoLegend()
+
+#pdf("Output/GeneMarkers_Dot_Plot.pdf", width=15, height=15)
+DotPlot(srat_data.norm,
+        features = as.character(unique(top10Up$gene)),
+        assay = "RNA", dot.scale=1) +
+        coord_flip() +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1,size=9),
+              axis.text.y = element_text(angle = 0, hjust = 1,size=5))
+
+#dev.off()
+
+
+```
+
+####> Identify Fibroblasts-Markers :
+
+```{r}
+
+fibro_Markers <- Seurat::FindMarkers(srat_data.norm, ident.1=c("COL1A1+ Fibroblasts",
+                                                          "DCN+ GSN+ MYOC+ Fibroblasts",
+                                                          "FBN1+ MFAP5+ CD55+ Fibroblasts"),
+                                    logfc.threshold = 0.25,only.pos = T, min.cells.feature = 3)
+
+fibro_Markers$GeneName <- rownames(fibro_Markers)
+
+fibro_Markers$GeneName %>% unique %>% length  ##1151
+
+write_delim(fibro_Markers, file="Fibroblasts_3subtypes_FindMarkers_DeMicheli_hum_logfc-0.25.tsv",
+            delim="\t",col_names=T)
+
+```
+
+#### ...or , Each one separetely:
+
+```{r}
+
+fibro_col1a1_markers <- Seurat::FindMarkers(srat_data.norm,
+                        ident.1=c("COL1A1+ Fibroblasts"),
+                        ident.2 = NULL, logfc.threshold = 0.25,
+                        only.pos = T,min.cells.feature = 3)
+
+##!! Attention: geneNames in Rownames -> not saved with "write_delim":
+fibro_col1a1_markers$GeneName <- rownames(fibro_col1a1_markers)
+
+fibro_col1a1_markers$GeneName %>% unique %>% length
+
+
+fibro_myoc_markers <- Seurat::FindMarkers(srat_data.norm,
+                       ident.1=c("DCN+ GSN+ MYOC+ Fibroblasts"),
+                       ident.2 = NULL, logfc.threshold = 0.25,
+                       only.pos = T,min.cells.feature = 3)
+fibro_myoc_markers$GeneName <- rownames(fibro_myoc_markers)
+
+fibro_myoc_markers$GeneName %>% unique %>% length
+
+fibro_fbn1_markers <- Seurat::FindMarkers(srat_data.norm,
+                      ident.1=c("FBN1+ MFAP5+ CD55+ Fibroblasts"),
+                      ident.2 = NULL, logfc.threshold = 0.25,only.pos = T)
+
+fibro_fbn1_markers$GeneName <- rownames(fibro_fbn1_markers)
+
+fibro_fbn1_markers$GeneName %>% unique %>% length
+
+
+####> Save in file :
+dir.create("For_Secretome/",showWarnings = F)
+
+write_delim(fibro_col1a1_markers,"Secretome/markers_of_COL1A1_fibroblasts_hs.tsv",col_names=T,delim="\t")
+
+write_delim(fibro_myoc_markers,"Secretome/markers_of_MYOC_fibroblasts_hs.tsv",col_names=T,delim="\t")
+
+write_delim(fibro_fbn1_markers,"Secretome/markers_of_FBN1_fibroblasts_hs.tsv",col_names=T,delim="\t")
+
+
+```
+
+article for DE_genes tools : https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7455704/
+tutorial : https://hms-dbmi.github.io/scw/differential-expression.html

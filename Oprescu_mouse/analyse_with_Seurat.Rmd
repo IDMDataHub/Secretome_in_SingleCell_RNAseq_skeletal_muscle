@@ -1,0 +1,423 @@
+---
+title: "Analyse S.C. Oprescu-mouse"
+author: "Maria Kondili"
+date:   "03/01/2022"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+```{r libraries }
+library(Seurat)
+library(cerebroApp)
+library(dplyr)
+library(tidyverse)
+library(SingleR)
+library(celldex)
+library(RColorBrewer)
+```
+
+```{r input_data}
+regen_data <- readRDS("GSE138826/GSE138826_regen_data.rds")
+#>> .@ data             :'data.frame':	18658 obs. of  53193 variables:
+#$RNA : contains the RNA counts
+#$SCT: contains the SCT normalized values. Columns are the samples, rows are genes
+
+metadata_table <- data.frame("cell_annot"= regen_data$SCT@varMetadata$metacluster,
+                             "cell_ID"   = regen_data$SCT@varMetadata$cellID,
+                             "timepoint" = regen_data$SCT@varMetadata$timepoint,
+                             row.names   ="cell_ID")
+
+regen_data$SCT@data %>% glimpse
+
+# According Article : re-scaled the data using the SCTransform function
+```
+
+```{r create_seurat}
+### APPLY SEURAT analysis steps documented in :
+### https://www.singlecellcourse.org/scrna-seq-dataset-integration.html
+
+srat_data <- CreateSeuratObject(counts=regen_data$SCT@data ,
+                                 project="Oprescu",
+                                 assay="RNA",
+                                 names.field = 2,
+                                 names_delim ="_",
+                                 meta.data   = metadata_table)
+
+##NOTE: meta.data should contain cell_names in rows and additional meta-info in columns
+##        cell_names in rows should match the column_names of raw_data
+
+## Calculate fractions of Ribosomal Proteins and Mitochondrial genes
+srat_data[["percent.mt"]]  <- PercentageFeatureSet(srat_data, pattern="^MT-")
+srat_data[["percent.rbp"]] <- PercentageFeatureSet(srat_data, pattern="^RP[SL]")
+
+##From Article:
+# cells with more than
+# 15% reads mapping to mitochondrial genes, feature counts greater than
+#6,000 and more than 60,000 reads were filtered out;
+
+VlnPlot(srat_data, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+```
+
+```{r seurat_pipe}
+srat_data <-  srat_data %>%
+              ScaleData(features = rownames(srat_data)) %>%
+              FindVariableFeatures(selection.method = "vst",nfeatures = 2000) %>%
+              RunPCA(features = VariableFeatures(object = .),verbose=TRUE)
+
+
+DimPlot(srat_data, reduction = "pca", repel=TRUE,label=F)
+
+srat_data <- FindNeighbors(srat_data, dims = 1:10)
+
+srat_data <- FindClusters(srat_data, resolution = 0.4)
+
+##>Run non-linear dimensional reduction
+srat_data <- RunUMAP(srat_data, dims = 1:20)
+
+srat_data %>% glimpse
+
+```
+
+```{r plot umap}
+### Plot with Cell-Type ID :
+
+dittoSeq::dittoDimPlot(srat_data, var = metadata_table$cell_annot,
+                       reduction.use = "umap",
+                       do.label = T, main="Oprescu-Mouse-S.C.Clusters",
+                       labels.size = 3.5, legend.show = F)
+
+### Plot with Cluster-Number
+dittoSeq::dittoDimPlot(srat_data, var = "ident",
+                       reduction.use = "umap",
+                       do.label = T, main="Mouse S.C.Clusters",
+                       size = 0.3)
+```
+
+```{r find_marker_genes}
+# faps_Markers <- Seurat::FindMarkers(srat_data, ident.1=c(1,3,8,17),
+#                                     ident.2 = NULL, logfc.threshold = 0.25,
+#                                     only.pos = T,min.cells.feature = 3)
+
+faps_markers <- readr::read_delim("Table_S2_FAP_gene_signature_list_per_subtype.tsv",
+                                  delim="\t", col_names=T)
+
+# A tibble: 6 × 7
+# Cxcl14_FAPs Dpp4_FAPs Dlk1_FAPs Osr1_FAPs Wisp1_FAPs Activated_FAPs Fibroblasts
+# <chr>       <chr>     <chr>     <chr>     <chr>      <chr>          <chr>
+# 1 Cxcl14      Pi16      Dlk1      Gsn       Postn      Cxcl5          Meg3
+# 2 Smoc2       Igfbp5    Itm2a     Mgp       Csrp2      Prg4           Col3a1
+# 3 Ccl11       Igfbp6    Meg3      Dcn       Sfrp2      Timp1          Dlk1
+# 4 Gsn         Fbn1      Igf2      Smoc2     Ptn        Mt2            Itm2a
+# 5 Dcn         Ugdh      Cdkn1c    Col3a1    Cthrc1     Cxcl1          Col1a1
+# 6 Hsd11b1     Cd55      Col3a1    Egr1      H19        Ptx3           Col1a2
+
+```
+
+```{r extract_geneNames}
+faps_geneNames <- as.vector(unique(unlist(c(faps_markers[,"Cxcl14_FAPs"],
+                    faps_markers[,"Dpp4_FAPs"],
+                    faps_markers[,"Dlk1_FAPs"],
+                    faps_markers[,"Osr1_FAPs"],
+                    faps_markers[,"Wisp1_FAPs"],
+                    faps_markers[,"Activated_FAPs"]))))
+
+write_file(paste(faps_geneNames,collapse="\n"),"FAPs_Markers_6subgroups_Oprescu.txt")
+
+```
+
+##### FOCUS ON COUNTS of FAPs clusters:
+
+```{r samples_per_timepoint}
+samples_FAPs <- rownames(subset(metadata_table,cell_annot=="FAPs"))
+samples_FAPs <- gsub(" ", "", samples_FAPs)
+idx_faps_colnames <- which(colnames(srat_data@assays$RNA@counts) %in% samples_FAPs)
+
+faps_counts <- srat_data@assays$RNA@counts[,idx_faps_colnames]
+faps_counts <- as.data.frame(faps_counts )
+
+timepoints <- map(colnames(faps_counts),
+              ~unlist(strsplit(.x, "_"))[1] ) %>%
+              unlist %>% as.factor %>% levels
+
+# timepoints
+# [1] "0.5DPI"  "10DPI"  "21DPI"   "2DPI"   "3.5DPI"  "5DPI"  "Noninjured"
+
+NI.cols   <- grep("Noninjured",colnames(faps_counts))
+T0_5.cols <- grep("0.5DPI",colnames(faps_counts))
+T2.cols   <- grep("2DPI",colnames(faps_counts) )
+T3_5.cols <- grep("3.5DPI",colnames(faps_counts))
+T5.cols   <- grep("5DPI",colnames(faps_counts))
+T10.cols  <- grep("10DPI",colnames(faps_counts))
+T21.cols  <- grep("21DPI",colnames(faps_counts))
+
+faps_samples_n_genes <- faps_counts[faps_geneNames, ]
+
+```
+
+#### Calculate Mean-Expr Per Timepoint (mean over columns of same tp)
+
+```{r mean_per_tp}
+NI.mean   <- rowMeans(faps_counts[,NI.cols])
+T0_5.mean <- rowMeans(faps_counts[,T0_5.cols])
+T2.mean   <- rowMeans(faps_counts[,T2.cols])
+T3_5.mean <- rowMeans(faps_counts[,T3_5.cols])
+T5.mean   <- rowMeans(faps_counts[,T5.cols])
+T10.mean  <- rowMeans(faps_counts[,T10.cols])
+T21.mean  <- rowMeans(faps_counts[,T21.cols])
+
+###> Create a table of Mean-Expr &  Keep only FAPs-Markers
+
+timepoint_mean_faps <- data.frame("NI"=NI.mean, "T0_5"=T0_5.mean,
+                                  "T2"=T2.mean, "T3_5"=T3_5.mean,
+                                  "T5"=T5.mean, "T10" =T10.mean,
+                                  "T21"=T21.mean)
+
+timepoint_MarkerGenes_Faps <- timepoint_mean_faps[faps_geneNames, ]
+
+timepoint_MarkerGenes_Faps %>% dim
+#[1] 215   7
+```
+
+```{r prepare_counts_faps_tab}
+
+##> Clean from NAs & apply Z-score:
+naked_expr_faps <- timepoint_MarkerGenes_Faps
+rownames(naked_expr_faps) <- NULL
+
+
+calc_z_score <- function(x){
+  # x -> column of the data.frame
+  (x - mean(x)) / sd(x)
+}
+
+z_faps <- t(apply(naked_expr_faps,1, calc_z_score))
+na_idx <- which(rowSums(is.na(z_faps)) > 0)
+na_idx %>% length
+z_faps <- drop_na(as.data.frame(z_faps))
+z_faps %>% dim
+design <- data.frame("sample"   =colnames(timepoint_mean_faps),
+                     "replicate"=c(1,1,1,1,1,1,1),
+                     "treatment"= colnames(timepoint_mean_faps))
+
+print(design)
+
+col_data <- data.frame(row.names=design$sample, conditions=design$treatment )
+col_data  
+```
+
+####
+#### K-Means Heatmap : Grouping of genes in boxes
+####
+
+```{r heatmap}
+
+library(pheatmap)
+p_k <- pheatmap(z_faps,
+                color = colorRampPalette(rev(brewer.pal(n=10,name ="RdYlBu")))(100),
+                annotation_col = col_data,
+                cluster_rows = TRUE,
+                kmeans_k = 6,
+                clustering_method = "complete",
+                clustering_distance_rows="euclidean",
+                cluster_cols=FALSE,
+                annotation_legend = TRUE,
+                annotation_names_col = TRUE,
+                show_rownames=TRUE,
+                labels_row = NULL,
+                angle_col = "0",
+                main = "K-means Clustering of FAPs-Marker-Genes through Time")
+print(p_k)
+
+```
+
+#### Save GeneNames found in each cluster
+
+```{r faps_data_frame }
+
+fapsMarkers_kmeans_clusters <- data.frame("geneName"= faps_geneNames,
+                                          "cluster" = p_k$kmeans$cluster )
+
+fapsMarkers_kmeans_clusters[1:10,]
+
+write_delim(fapsMarkers_kmeans_clusters,
+            file="FAPs_Markers_in_6clusters_kmeans_heatmap.tsv",
+            delim="\t",col_names=TRUE)
+
+```
+
+#### Count Cell-Number per Cell-Type --> Histogram
+
+```{r cell_number_count}
+cell_types <- metadata_table$cell_annot %>% as.factor %>% levels
+
+nb_cell_types <- map(cell_types,  ~ length(rownames(subset(metadata_table,cell_annot==.x ))) )
+names(nb_cell_types) <- cell_types
+
+nb_cell_per_type <- data.frame(cbind("cell_type"=names(nb_cell_types), "nb_cells"=nb_cell_types))
+
+write_delim(nb_cell_per_type, file="Nb_Cells_Per_CellType.tsv", delim="\t",col_names=T)
+
+```
+
+#### Split per Timepoint :
+
+```{r}
+##> can use srat_data:
+#colnames(srat_data@assays$RNA@counts) --> indicate timepoint in suffix
+#non_inj_cells <- as_tibble(srat_data@assays$RNA@counts) %>% dplyr::select_if(grepl("Noninjured",colnames(.) )) %>% length()
+
+###> or Metadata:
+timepoints_md <- metadata_table$timepoint %>% as.factor  %>% levels
+## [1] "0_5dpi"  "10dpi"   "21dpi"   "2dpi"    "3_5dpi"  "5dpi"    "non-inj"
+
+
+### OR: per timepoint->count cells:
+nb_cells_per_ct_per_tp <- list()
+for (tp in timepoints_md){
+  nb_cells_per_ct_per_tp[[tp]] <- map(cell_types, ~nrow(subset(metadata_table, (cell_annot==.x & timepoint==tp ))) )
+  names(nb_cells_per_ct_per_tp[[tp]]) <- cell_types
+}
+
+##>Transform in Data.Frame (melted-> for ggplot)
+
+cell_count_per_ct_and_tp_df <- data.frame("count"= unlist(nb_cells_per_ct_per_tp))
+
+cell_count_per_ct_and_tp_df$timepoint <- unlist(map(1:nrow(cell_count_per_ct_and_tp_df),
+                                                    ~strsplit(rownames(cell_count_per_ct_and_tp_df), "\\.")[[.x]][1]))
+
+cell_count_per_ct_and_tp_df$cell_type <- unlist(map(1:nrow(cell_count_per_ct_and_tp_df),
+                                                ~strsplit(rownames(cell_count_per_ct_and_tp_df), "\\.")[[.x]][2]))
+
+```
+
+#### PLOT histogram of Nb.Cells Per Timepoint
+
+```{r}
+subset(cell_count_per_ct_and_tp_df, (timepoint=="10dpi" & cell_type=="APC"))
+#  rowID         count timepoint     cell_type
+# 10dpi.APC       393     10dpi           APC
+
+##> change Order of Timepoints to be sequential :
+cell_count_per_ct_and_tp_df$timepoint <- factor(cell_count_per_ct_and_tp_df$timepoint,
+                                         levels=c("non-inj","0_5dpi","2dpi","3_5dpi", "5dpi","10dpi","21dpi" ))
+
+## Count total number of Cells -> to show on bars:
+
+overall_cell_count <-  cell_count_per_ct_and_tp_df %>%
+                        dplyr::group_by(timepoint) %>%
+                        dplyr::summarise(tot_count = sum(count))
+
+
+ggplot(cell_count_per_ct_and_tp_df, aes(x=timepoint, y=count, fill=cell_type)) +
+      geom_bar(stat="identity", width=0.9, position="stack") +
+      ggrepel::geom_label_repel(aes(x=timepoint, y=count,label=count),
+                position=position_stack(vjust=0.5)) +
+      ggtitle("Cell Count per TimePoint & Cell-Type")
+
+```
+
+####
+####  Heatmap only with Secreted
+####
+
+```{r}
+secretome_dir <- "Secretome/Outcyte_Results/"
+
+outcyte_res <- read_delim(paste0(secretome_dir, "Outcyte_predictions_FAPsMarkers_with_GeneName.tsv"),
+                         delim="\t",col_names=T)
+
+## secreted_outcyte_res <- outcyte_res[which(outcyte_res$Prediction %in%  c("Signal-peptide","UPS")),]
+secreted_genes <- outcyte_res$GeneSymbol[which(outcyte_res$Prediction %in%  c("Signal-peptide","UPS"))]
+
+
+pos_secreted <- which(faps_geneNames %in% secreted_genes)
+
+
+secreted_Faps_expr <- timepoint_MarkerGenes_Faps[pos_secreted , ]
+#[1] 215   7
+
+
+##> Clean from NAs & apply Z-score:
+naked_secreted_expr_faps <- secreted_Faps_expr
+rownames(naked_secreted_expr_faps) <- NULL
+
+
+z_faps <- t(apply(naked_secreted_expr_faps,1, calc_z_score))
+na_idx <- which(rowSums(is.na(z_faps)) > 0)
+na_idx %>% length
+z_faps <- drop_na(as.data.frame(z_faps))
+z_faps %>% dim
+design <- data.frame("sample"   =colnames(timepoint_mean_faps),
+                     "replicate"=c(1,1,1,1,1,1,1),
+                     "treatment"= colnames(timepoint_mean_faps) )
+
+print(design)
+
+col_data <- data.frame(row.names=design$sample, conditions=design$treatment )
+
+####
+#### K-Means Heatmap : Grouping of genes in boxes
+####
+
+library(pheatmap)
+p_k_secr <- pheatmap(z_faps,
+                color = colorRampPalette(rev(brewer.pal(n=10,name ="RdYlBu")))(100),
+                annotation_col = col_data,
+                cluster_rows = TRUE,
+                kmeans_k = 6,
+                clustering_method = "complete",
+                clustering_distance_rows="euclidean",
+                cluster_cols=FALSE,
+                annotation_legend = TRUE,
+                annotation_names_col = TRUE,
+                show_rownames=TRUE,
+                labels_row = NULL,
+                angle_col = "0",
+                main = "K-means Clustering of Secreted-FAPs-Markers through Time")
+
+png("Kmeans_Clustering_k6_Secreted_FAPs_Genes_with_clusterName.png",
+    width=700,height=600)
+    print(p_k_secr)
+dev.off()
+
+
+
+###
+### Save Names found in each Cluster-Kmeans :
+###
+SecretedFaps_kmeans_clusters <- data.frame("geneName"= rownames(secreted_Faps_expr),
+                                           "cluster" = p_k_secr$kmeans$cluster )
+
+SecretedFaps_kmeans_clusters %>% nrow
+##> 157
+
+write_delim(SecretedFaps_kmeans_clusters,
+            file="Seurat_Analysis/Secreted_FAPs_Markers_in_6clusters_kmeans_heatmap.tsv",
+            delim="\t",col_names=TRUE)
+
+####
+#### GO-terms of Secreted-Genes per Cluster
+####
+
+source("~/myScriptsBank/Barplot_with_GOterms_mm.R")
+##> Saves images in folder : Plots/
+
+create_barplot_GOterms.mm(subset(SecretedFaps_kmeans_clusters, cluster == 1)$geneName,
+                          gene_format = "SYMBOL",my_ontol="ALL",main="Cluster1-Genes",in_png=T)
+
+create_barplot_GOterms.mm(subset(SecretedFaps_kmeans_clusters, cluster == 2)$geneName,
+                          gene_format = "SYMBOL",my_ontol="ALL",main="Cluster2-Genes",in_png=T)
+
+create_barplot_GOterms.mm(subset(SecretedFaps_kmeans_clusters, cluster == 3)$geneName,
+                          gene_format = "SYMBOL",my_ontol="ALL",main="Cluster3-Genes",in_png=T)
+
+create_barplot_GOterms.mm(subset(SecretedFaps_kmeans_clusters, cluster == 4)$geneName,
+                          gene_format = "SYMBOL",my_ontol="ALL",main="Cluster4-Genes",in_png=T)
+
+create_barplot_GOterms.mm(subset(SecretedFaps_kmeans_clusters, cluster == 5)$geneName,
+                          gene_format = "SYMBOL",my_ontol="ALL",main="Cluster5-Genes",in_png=T)
+
+create_barplot_GOterms.mm(subset(SecretedFaps_kmeans_clusters, cluster == 6)$geneName,
+                          gene_format = "SYMBOL",my_ontol="ALL",main="Cluster6-Genes",in_png=T)
