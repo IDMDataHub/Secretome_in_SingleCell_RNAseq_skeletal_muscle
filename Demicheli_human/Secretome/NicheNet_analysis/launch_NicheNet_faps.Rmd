@@ -1,0 +1,607 @@
+---
+title: "Launch NicheNet for secreted Genes in Fibroblasts-FAPs"
+author: "Maria Kondili"
+date: "18/07/2022"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(AnnotationDbi))
+suppressPackageStartupMessages(library("org.Hs.eg.db"))
+suppressPackageStartupMessages(library(ggrepel))
+suppressPackageStartupMessages(library(nichenetr)) ## devtools::install_github("saeyslab/nichenetr")
+library(Seurat)
+
+```
+
+
+```{r}
+
+work_dir <- "/projects/single_cell_skeletal_muscle/DeMicheli/human/"
+
+secretome_dir <- paste0(work_dir, "Analyse_NormData_with_Seurat/Secretome/")
+
+out_dir <- paste0(secretome_dir,"NicheNet_analysis/")
+```
+
+###### Read Input Genes = Secreted
+
+```{r}
+secreted_fibro_genes <- read_delim(paste0(secretome_dir,"markers_fibro/109_Common_Fibroblasts_Secreted_Genes.tsv"),
+                                        delim="\n",col_names=T)
+
+secreted_fibro_genes <- secreted_fibro_genes$GeneName
+```
+
+##### Define Background-Geneset -> Read All genes of S.C.dataset-human
+
+> metadata:
+
+```{r}
+metadata <- read.table(paste0(work_dir,"GSE143704/DeMicheli_HumanMuscleAtlas_metadata.txt"),
+                       sep="\t",header=TRUE,row.names=1)
+
+metadata <- metadata[,c(1:6)]
+
+```
+
+>normalised count data  
+
+```{r read_sc_data }
+data <- read.table(paste0(work_dir,"GSE143704/DeMicheli_HumanMuscleAtlas_normalizeddata.txt"),
+                        sep="\t",header=TRUE,row.names=1)
+
+#data    <- readRDS(paste0(work_dir,"Analyse_NormData_with_Seurat/norm_expr_data.rds"))
+
+srat_data <- CreateSeuratObject(counts = data,
+                                 project = "human_muscle",
+                                 meta.data = metadata,
+                                 min.cells = 3,
+                                 min.features = 200)
+
+srat_data <- srat_data %>% ScaleData(features = rownames(srat_data)) %>%
+             FindVariableFeatures(selection.method = "vst",nfeatures = 2000) %>%
+             RunPCA(features = VariableFeatures(object = .), verbose=TRUE)
+
+srat_data <- FindNeighbors(srat_data, dims = 1:30)
+
+srat_data <- FindClusters(srat_data, resolution = 0.4)
+
+srat_data <- SetIdent(srat_data,value = "cell_annotation")
+
+# saveRDS(srat_data,paste0(work_dir,"Analyse_NormData_with_Seurat/srat_data.rds"))
+
+```
+
+Create the background to be used : All expressed genes  
+
+```{r}
+
+background <- rownames(srat_data@assays$RNA@counts)
+
+```
+
+### NicheNet’s ligand-target prior model
+
+```{r}
+httr::timeout(100)
+ligand_target_matrix <- readRDS(url("https://zenodo.org/record/3260758/files/ligand_target_matrix.rds"))
+
+ligand_target_matrix %>% glimpse
+
+```
+
+###  NicheNet's Ligand-Receptor Data Source
+
+```{r}
+httr::timeout(100)
+lr_network <- readRDS(url("https://zenodo.org/record/3260758/files/lr_network.rds"))
+
+head(lr_network)
+```
+
+Unique Genes as RECEPTORS found in the network:
+
+```{r}
+lr_network$to %>% as.factor %>% levels() %>% length  
+```
+
+
+```{r}
+ligands <- lr_network %>%  pull(from) %>%unique()
+
+ligands %>% length
+```
+
+### Find Ligands in our Input Dataset of Secreted Genes of FAPs
+
+```{r}
+
+expressed_ligands <- intersect(ligands,secreted_fibro_genes)
+expressed_ligands
+
+```
+
+##### Find Receptors in receiver-cells :
+
+1 / Extract Single-Cell expr. of FAPs, Endoth, MuSc, Mature Skeletal.Muscle, Macrophages
+
+```{r}
+
+## extract 3 sub-clusters of Fibroblasts-FAPs
+samples_Fibro1 <- rownames(subset(metadata,cell_annotation=="COL1A1+ Fibroblasts") )
+samples_Fibro2 <- rownames(subset(metadata,cell_annotation=="DCN+ GSN+ MYOC+ Fibroblasts") )
+samples_Fibro3 <- rownames(subset(metadata,cell_annotation=="FBN1+ MFAP5+ CD55+ Fibroblasts") )
+
+samples_Fibro <- unique(c(samples_Fibro1, samples_Fibro2, samples_Fibro3))
+
+## extract samples of other cell-types : Endothelial, Stem-cells,Mature sk.mu, Macrophages
+samples_endoth <- rownames(subset(metadata,cell_annotation %in%
+                                  c("ICAM1+ SELE+ VCAM1+ Endothelial",
+                                    "CLDN5+ PECAM1+ Endothelial")))
+
+samples_mature_skmu <- rownames(subset(metadata,cell_annotation == "ACTA1+ Mature skeletal muscle"))
+
+samples_mature_skmu %>% length()
+samples_MuSC <-  rownames(subset(metadata,cell_annotation %in%
+                                   c("PAX7+ DLK1+ MuSCs and progenitors",
+                                    "PAX7low MYF5+ MuSCs and progenitors")))
+samples_MuSC %>% length
+samples_macroph <- rownames(subset(metadata,cell_annotation %in%
+                                     c("S100A9+ LYZ+ Inflammatory macrophages",
+                                       "C1QA+ CD74+ Macrophages")))
+
+samples_macroph %>% length
+```
+
+##### Extract GeneNames expressed at each cell-type :
+
+ Keep only genes with expr > 0
+
+```{r}
+##> Counts only of these samples -> Find Genes that are expressed in each cell-type
+
+subset_celltype_and_genes <- function(srat_data,ct_samples){
+
+  #1. choose samples
+  srat_counts <- srat_data@assays$RNA@counts[, ct_samples]
+
+  #2. filter lines for genes with counts >0
+  srat_counts_filt <- srat_counts[which(rowSums(srat_counts) >0 ),]
+
+  genes_ct <- rownames(srat_counts_filt)
+  return(genes_ct)
+
+}
+
+
+#srat_counts_fibro  <- srat_data@assays$RNA@counts[,c(samples_Fibro1,samples_Fibro2,samples_Fibro3)]
+fibro_genes   <- subset_celltype_and_genes(srat_data,
+                                          c(samples_Fibro1,samples_Fibro2,samples_Fibro3))
+
+endoth_genes    <- subset_celltype_and_genes(srat_data,samples_endoth)
+
+mature_mu_genes <- subset_celltype_and_genes(srat_data,samples_mature_skmu)
+
+MuSC_genes      <-  subset_celltype_and_genes(srat_data,samples_MuSC)
+
+macroph_genes   <- subset_celltype_and_genes(srat_data,samples_macroph)
+
+
+```
+
+2/ Find which genes from the above cell-types can be regulated :
+
+Potential Receptors :
+
+- fibroblasts (3 sub-clusters)
+
+- endothelial cells
+
+- mature_skeletal muscle cells
+
+- Muscle stem-cells and progenitors
+
+- macrophages
+
+```{r}
+
+receptors <- lr_network %>% pull(to) %>% unique()
+
+expr_receptors_fibro <- intersect(receptors, fibro_genes)
+expr_receptors_endoth <- intersect(receptors, endoth_genes)
+expr_receptors_mature_mu <- intersect(receptors, mature_mu_genes)
+expr_receptors_MuSC <- intersect(receptors, MuSC_genes)
+expr_receptors_macroph <- intersect(receptors, macroph_genes)
+
+glue::glue("There are {expr_receptors_fibro %>% length} Receptors ,among genes expressed in Fibroblast Cells.")
+glue::glue("There are {expr_receptors_endoth %>% length} Receptors ,among genes expressed in Endothelial Cells.")
+glue::glue("There are {expr_receptors_mature_mu %>% length} Receptors ,among genes expressed in Mature Skel.muscle cells")
+glue::glue("There are {expr_receptors_MuSC %>% length} Receptors ,among genes expressed in Stem Cells & Progenitors.")
+glue::glue("There are {expr_receptors_macroph %>% length} Receptors ,among genes expressed in Macrophages.")
+
+
+```
+
+
+```{r}
+
+find_ligand_targets_in_SC_FAPs <- function(lr_network,
+                                           background,
+                                           secreted_genes, # e.g fibro_genes
+                                           expressed_ligands,
+                                           expressed_receptors,
+                                           ligand_target_matrix,
+                                           cell_type){
+
+  ##### Filter Ligands and receptors of Nichenet with only expressed-ones in my dataset
+  lr_network_expressed <- lr_network %>%
+                          filter(from %in% expressed_ligands & to %in% expressed_receptors)
+
+  potential_ligands <- lr_network_expressed %>%
+                        pull(from) %>%
+                        unique()
+
+  glue::glue("Potential ligands are :\n {potential_ligands}")
+
+  ##### Calculate the ligand activity of each ligand
+
+
+  ligand_activities <- predict_ligand_activities(geneset = secreted_genes,
+                                                background_expressed_genes = background,
+                                                ligand_target_matrix = ligand_target_matrix,
+                                                potential_ligands = potential_ligands)
+
+  ##> To prioritize by Pearson-Correlation-Coefficient :
+  ##> ligand_activities  %>% arrange(-pearson)
+
+
+  best_upstream_ligands <- ligand_activities %>%
+                            top_n(20, pearson) %>%
+                            arrange(-pearson) %>%
+                            pull(test_ligand)
+
+
+
+  active_ligand_target_links_df <- best_upstream_ligands %>%
+                                    lapply(get_weighted_ligand_target_links,
+                                           geneset = secreted_genes ,
+                                           ligand_target_matrix = ligand_target_matrix,n = 250) %>%
+                                    bind_rows()
+
+  # active_ligand_target_links_df %>% head
+  active_ligand_target_links_df %>% nrow
+
+
+  active_ligand_target_links <- prepare_ligand_target_visualization(
+                                ligand_target_df     = active_ligand_target_links_df,
+                                ligand_target_matrix = ligand_target_matrix,
+                                cutoff = 0.25)
+  # cut-off :if >>0.25 ,only strong L-Targets kept, if <<0.25, more links appear
+
+  active_ligand_target_links %>% head
+
+
+  order_ligands <- intersect(best_upstream_ligands, colnames(active_ligand_target_links)) %>% rev()
+  order_targets <- active_ligand_target_links_df$target %>% unique()
+
+
+ #### Create square Matrix : ligands x receptors
+
+  vis_ligand_target <- active_ligand_target_links[order_targets,order_ligands] %>% t()
+
+
+  ###### Heatmap of Ligands with Potentially regulated genes
+
+  p_ligand_target_network <-  vis_ligand_target %>%
+                              make_heatmap_ggplot("Secreted-FAPs ligands",
+                                                  paste0("Potentially regulated genes in ",cell_type),
+                                                  color = "purple",
+                                                  legend_position = "top",
+                                                  x_axis_position = "top",
+                                                  legend_title = "Regulatory potential") +
+                              scale_fill_gradient2(low = "whitesmoke",  
+                                                   high = "purple",
+                                                   breaks = c(0,0.005,0.01)) +
+                              theme(axis.text.x = element_text(face = "italic", size=9)) +
+                              ggtitle(cell_type)
+
+
+  return(p_ligand_target_network)
+}
+
+```
+
+
+```{r}
+
+#pdf("FAPs_Ligands_and_Potential_Receptors_in_other_cell_types.pdf",onefile=T)
+find_ligand_targets_in_SC_FAPs(lr_network,
+                              background,
+                              secreted_fibro_genes,
+                              expressed_ligands,
+                              expr_receptors_fibro,
+                              ligand_target_matrix,
+                              "Fibroblasts" )  %>% print(.)
+
+##! For interactive exploration of plot use plotly:
+#ggplotly(plot_lr_fibro)
+
+# ggsave(plot_lr_fibro, filename="FAPs_Ligands_and_Potential_Receptors_Fibroblasts.pdf",
+#        device = cairo_pdf, width = 5, height = 4)
+
+
+find_ligand_targets_in_SC_FAPs(lr_network,
+                                  background,
+                                  secreted_fibro_genes,
+                                  expressed_ligands,
+                                  expr_receptors_endoth,
+                                  ligand_target_matrix,
+                                  "Endothelial_Cells")  %>% print(.)
+
+find_ligand_targets_in_SC_FAPs(lr_network,
+                                  background,
+                                  secreted_fibro_genes,
+                                  expressed_ligands,
+                                  expr_receptors_mature_mu,
+                                  ligand_target_matrix,
+                                  "Mature_sk_Mu_Cells" ) %>%  print(.)
+
+
+
+find_ligand_targets_in_SC_FAPs(lr_network,
+                                  background,
+                                  secreted_fibro_genes,
+                                  expressed_ligands,
+                                  expr_receptors_MuSC,
+                                  ligand_target_matrix,
+                                  "MuSCs_and_progenitors") %>% print(.)
+
+
+find_ligand_targets_in_SC_FAPs(lr_network,
+                                  background,
+                                  secreted_fibro_genes,
+                                  expressed_ligands,
+                                  expr_receptors_macroph,
+                                  ligand_target_matrix,
+                                  "Macrophages") %>% print(.)
+
+
+```
+
+#### LIGAND-RECEPTORS PAIRS
+
+```{r}
+
+get_best_ligands <- function(lr_network,background,
+                             ligand_target_matrix,
+                             secreted_genes,expressed_receptors){
+
+  lr_network_expressed <- lr_network %>%
+                          filter(from %in% secreted_genes & to %in% expressed_receptors)
+
+  potential_ligands <- lr_network_expressed %>% pull(from) %>% unique()
+
+  glue::glue("Potential ligands are  : {potential_ligands}")
+
+  ##### Calculate the ligand activity of each ligand
+  ligand_activities <- predict_ligand_activities(geneset = secreted_genes,
+                                                background_expressed_genes = background,
+                                                ligand_target_matrix = ligand_target_matrix,
+                                                potential_ligands = potential_ligands)
+
+  ##> To prioritize by Pearson-Correlation-Coefficient :
+  ##> ligand_activities  %>% arrange(-pearson)
+
+  best_upstream_ligands <- ligand_activities %>%
+                            top_n(30, pearson) %>%
+                            arrange(-pearson) %>%
+                            pull(test_ligand)
+
+  return(best_upstream_ligands)
+}
+
+```
+
+#### Define Best Ligands to be considered for L-R network (for each cell-type)
+
+```{r}
+
+best_upstream_ligands_fibro <- get_best_ligands(lr_network,
+                                          background,
+                                          ligand_target_matrix,
+                                          secreted_fibro_genes,
+                                          expr_receptors_fibro)
+best_upstream_ligands_fibro
+
+best_upstream_ligands_endoth <- get_best_ligands(lr_network,
+                                          background,
+                                          ligand_target_matrix,
+                                          secreted_fibro_genes,
+                                          expr_receptors_endoth)
+best_upstream_ligands_endoth
+
+best_upstream_ligands_macrof <- get_best_ligands(lr_network,
+                                          background,
+                                          ligand_target_matrix,
+                                          secreted_fibro_genes,
+                                          expr_receptors_macroph)
+best_upstream_ligands_macrof
+
+
+best_upstream_ligands_skmu <- get_best_ligands(lr_network,
+                                          background,
+                                          ligand_target_matrix,
+                                          secreted_fibro_genes,
+                                          expr_receptors_mature_mu)
+best_upstream_ligands_skmu
+
+best_upstream_ligands_muSc <- get_best_ligands(lr_network,
+                                          background,
+                                          ligand_target_matrix,
+                                          secreted_fibro_genes,
+                                          expr_receptors_MuSC)
+
+best_upstream_ligands_muSc
+```
+
+###### Find Best Ligand-Receptor Pairs
+
+```{r}
+
+get_best_ligand_receptor_pairs <- function(lr_network,best_upstream_ligands, expr_receptors, cell_type){
+
+  ## Now we get the ligand-receptor network of the top-ranked ligands
+  ##> To replace expr_receptors --> expr_receptors_<other_celltypes>
+
+  lr_network_top <- lr_network %>%
+                    filter(from %in% best_upstream_ligands & to %in% expr_receptors) %>%
+                    distinct(from,to)
+
+  #>"distinct" fun: remove "source" and "database" columns, keep unique pairs(removes duplic.rows)
+
+  best_upstream_receptors <- lr_network_top %>% pull(to) %>% unique()
+
+  ## Get the weights of the ligand-receptor interactions as used in the NicheNet model
+
+  httr::timeout(100)
+  weighted_networks = readRDS(url("https://zenodo.org/record/3260758/files/weighted_networks.rds"))
+
+  ## Keep only best L-R from the Network :
+  lr_network_top_df <- weighted_networks$lr_sig %>%
+                       filter(from %in% best_upstream_ligands & to %in% best_upstream_receptors )
+
+  ##> create square table with "from"-genes in columns ,via "spread()" function :
+  lr_network_top_df <- lr_network_top_df %>% spread("from","weight",fill = 0)
+
+  lr_network_top_matrix <- lr_network_top_df %>%
+                           dplyr::select(-to) %>% as.matrix() %>%
+                           magrittr::set_rownames(lr_network_top_df$to)
+
+
+  ## Hierarchical Clustering to order the ligands and receptors:
+  dist_receptors <- dist(lr_network_top_matrix, method = "binary")
+  hclust_receptors <- hclust(dist_receptors, method = "complete" ) #method="median" , "median" , "ward.D2"
+  order_receptors_hcl <- hclust_receptors$labels[hclust_receptors$order]
+
+  dist_ligands <- dist(lr_network_top_matrix %>% t(), method = "binary")
+  hclust_ligands <- hclust(dist_ligands, method = "complete")
+  order_ligands_hcl <- hclust_ligands$labels[hclust_ligands$order]
+
+
+  vis_ligand_receptor_network <- lr_network_top_matrix[order_receptors_hcl, order_ligands_hcl]
+
+  p_ligand_receptor_network <- vis_ligand_receptor_network %>% t() %>%
+                               make_heatmap_ggplot("FAPs secreted ligands",
+                                                  paste0("Receptors expressed by ", cell_type),
+                                                  color = "mediumvioletred",
+                                                  x_axis_position = "top",
+                                                  legend_title = "Prior interaction potential")
+
+  return(p_ligand_receptor_network)
+}
+
+```
+
+
+```{r}
+#pdf("FAPs_Ligands_and_Receptors_of_other_cell_types_heatmaps.pdf")
+
+get_best_ligand_receptor_pairs(lr_network,
+                               best_upstream_ligands_fibro,
+                               expr_receptors_fibro,
+                               "Fibroblasts_3subclusters") %>% print(.)
+
+get_best_ligand_receptor_pairs(lr_network,
+                               best_upstream_ligands_skmu,
+                               expr_receptors_mature_mu,
+                               "Mature SkMuscle") %>% print(.)
+
+
+get_best_ligand_receptor_pairs(lr_network,
+                               best_upstream_ligands_endoth,
+                               expr_receptors_endoth,
+                               "Endothelial Cells") %>% print(.)
+```
+
+Many Receptors are common in every graph from different cell-type ...!
+Let's check globally what happens with these receptors found :
+
+
+#### Show Common Receptors among cell-types
+
+```{r}
+
+### each one with fibroblasts
+
+intersect(expr_receptors_fibro,expr_receptors_endoth) %>% length
+intersect(expr_receptors_mature_mu,expr_receptors_fibro) %>% length
+intersect(expr_receptors_MuSC,expr_receptors_fibro) %>% length
+intersect(expr_receptors_macroph,expr_receptors_fibro) %>% length
+
+### among all cell-types :
+Reduce(intersect,
+       list(expr_receptors_macroph,
+            expr_receptors_fibro,
+            expr_receptors_MuSC,
+            expr_receptors_mature_mu,
+            expr_receptors_endoth)) %>% length
+
+```
+
+##### Visualise Network
+
+based on instructions here :https://github.com/saeyslab/nichenetr/blob/master/vignettes/ligand_target_signaling_path.md
+```{r}
+sig_network = readRDS(url("https://zenodo.org/record/3260758/files/signaling_network.rds"))
+gr_network = readRDS(url("https://zenodo.org/record/3260758/files/gr_network.rds"))
+
+```
+
+
+```{r}
+
+myligands ="FN1"
+mytargets = c("CYP1B1", "GSN","GPNMB") # regulated-genes in fibroblasts
+
+```
+
+
+```{r}
+library(xml2)
+library(DiagrammeRsvg) # devtools::install_github('rich-iannone/DiagrammeRsvg')
+
+active_signaling_network = get_ligand_signaling_path(ligand_tf_matrix=ligand_tf_matrix,
+                                                     ligands_all=myligands,
+                                                     targets_all=mytargets,
+                                                     weighted_networks=weighted_networks)
+
+# For better visualization of edge weighτs: normalize edge weights to make them comparable between signaling and gene regulatory interactions
+#active_signaling_network_min_max = active_signaling_network
+
+active_signaling_network$sig = active_signaling_network$sig %>%
+                                mutate(weight = ((weight-min(weight))/(max(weight)-min(weight))) + 0.75)
+
+active_signaling_network$gr = active_signaling_network$gr %>%
+                                mutate(weight = ((weight-min(weight))/(max(weight)-min(weight))) + 0.75)
+
+graph_min_max = diagrammer_format_signaling_graph(signaling_graph_list = active_signaling_network,
+                                                  ligands_all = myligands,
+                                                  targets_all = mytargets,
+                                                  sig_color = "indianred",
+                                                  gr_color = "steelblue")
+
+DiagrammeR::render_graph(graph_min_max, layout = "tree")
+
+## To save in file :
+##  %>% export_svg() %>% read_xml() %>% write_xml("FN1_to_CYP1B1+GSN_network.svg")
+
+```
