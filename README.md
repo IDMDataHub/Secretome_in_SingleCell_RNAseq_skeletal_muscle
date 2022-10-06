@@ -1,5 +1,6 @@
 # Secretome_in_Single_Cell_skeletal_muscle
 Extracted FAPs (Fibro-adipogenic Progenitors) expression from human & mouse S.C-RNA-seq of muscle from studies De Micheli et al.,Skeletal Muscle (2020) & Oprescu et al., iScience (2020)  in order to Study Virtual Secretome of FAPs during regeneration and in homeostasis. 
+Our study is published here : _Negroni et al.,Muscle fibro-adipogenic progenitors from a single-cell perspective:Focus on their "virtual"secretome_                  https://doi.org/10.3389/fcell.2022.952041
 
 Scripts used as follows: 
 - 1/analyse_with_Seurat.Rmd : analyse raw S.C.data published-> extract FAPs cells x FAPs markers table 
