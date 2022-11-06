@@ -29,7 +29,7 @@ library(cerebroApp)
 ```{r data, echo=TRUE,include=TRUE}
 ##> rownames = 1 : In the rownames are given the gene-symbols
 
-work_dir <-"/shared/projects/single_cell_skeletal_muscle/DeMicheli/human/"
+work_dir <-"/projects/Secretome_in_Single_Cell_skeletal_muscle/DeMicheli_human/"
 
 raw_data <- read.table(paste0(work_dir,"GSE143704/DeMicheli_HumanMuscleAtlas_rawdata.txt"),sep="\t",header=TRUE,row.names=1)
 
@@ -210,14 +210,14 @@ dittoDimPlot(srat_data.norm,
 #                                  min.pct = 0.25,
 #                                  logfc.threshold = 0.25,
 #                                  verbose = TRUE)
+# saveRDS(muscle.markers,"muscle_markers.rds")
 
 ##>replaced by :
-
-muscle.markers <- readRDS("../Seurat_Analysis/muscle_markers.rds") #( calculated in "analyse_norm_Data.Rmd")
+muscle.markers <- readRDS("Seurat_analysis/muscle_markers.rds")
 
 # muscle.markers %>% pull(cluster) %>% as.factor %>% levels
-# muscle.markers %>% group_by(cluster) %>% slice_max(n=2,order_by = avg_log2FC,with_ties=FALSE ) #n
-# = show this number of lines per cluster
+# muscle.markers %>% group_by(cluster) %>% slice_max(n=2,order_by = avg_log2FC,with_ties=FALSE )
+
 ##> visualise per marker:
 ##> RidgePlot, CellScatter, and DotPlot as additional methods to view your dataset
 cat("\nCurrent cluster ids = ", paste((muscle.markers$cluster %>% as.factor %>% levels),collapse="\n"))
@@ -232,7 +232,7 @@ cat("\nCurrent cluster ids = ", paste((muscle.markers$cluster %>% as.factor %>% 
 
 top10Up <- muscle.markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
 
-DoHeatmap(srat_data.norm, features = top10Up$gene) + NoLegend()
+DoHeatmap(srat_data.norm, features = top10Up$gene,size=3) + NoLegend()
 
 #pdf("Output/GeneMarkers_Dot_Plot.pdf", width=15, height=15)
 DotPlot(srat_data.norm,
@@ -247,9 +247,9 @@ DotPlot(srat_data.norm,
 
 ```
 
-####> Identify Fibroblasts-Markers :
+#### Identify Fibroblasts-Markers
 
-```{r}
+```{r,echo=T,eval=F,include=F}
 
 fibro_Markers <- Seurat::FindMarkers(srat_data.norm, ident.1=c("COL1A1+ Fibroblasts",
                                                           "DCN+ GSN+ MYOC+ Fibroblasts",
@@ -265,7 +265,7 @@ write_delim(fibro_Markers, file="Fibroblasts_3subtypes_FindMarkers_DeMicheli_hum
 
 ```
 
-#### ...or , Each one separetely:
+#### for each cluster
 
 ```{r}
 
@@ -309,5 +309,17 @@ write_delim(fibro_fbn1_markers,"Secretome/markers_of_FBN1_fibroblasts_hs.tsv",co
 
 ```
 
-article for DE_genes tools : https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7455704/
-tutorial : https://hms-dbmi.github.io/scw/differential-expression.html
+#### Venn between fibroblasts gene-markers :
+
+```{r venn_with_fibro_markers_subgroups}
+library(devtools)
+#devtools::install_github("yanlinlin82/ggvenn")
+library(ggvenn)
+
+ggvenn( list("COL1A1+"=fibro_col1a1_markers$GeneName,
+             "MYOC+"  =fibro_myoc_markers$GeneName,
+             "FBN1+"  =fibro_fbn1_markers$GeneName),
+        fill_color    = c("#0073C2FF", "#EFC000FF", "#868686FF", "#CD534CFF"),
+        stroke_size   = 0.5, set_name_size = 4,text_size = 4)
+
+```
