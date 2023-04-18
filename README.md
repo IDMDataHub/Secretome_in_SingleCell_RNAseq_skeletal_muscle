@@ -9,7 +9,7 @@ Other open-source tools used for the approach :
   - NicheNet : https://github.com/saeyslab/nichenetr
   
 Our study is published here : \
-**Negroni et al.,Muscle fibro-adipogenic progenitors from a single-cell perspective:Focus on their "virtual" secretome** \               https://doi.org/10.3389/fcell.2022.952041
+[**Negroni et al.,Muscle fibro-adipogenic progenitors from a single-cell perspective:Focus on their "virtual" secretome**]( https://doi.org/10.3389/fcell.2022.952041 )
 
 The Scripts should be used as follows: 
  > 1. analyse_with_Seurat.Rmd : analyse raw S.C.data published.Extract FAPs cells x FAPs markers table 
