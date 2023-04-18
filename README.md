@@ -1,8 +1,8 @@
 # Secretome_in_Single_Cell_skeletal_muscle
 In this repository we propose an approach for extracting FAPs (Fibro-adipogenic Progenitors) expression from human & mouse S.C-RNA-seq of muscle from following studies :
-  1. De Micheli et al.,Skeletal Muscle (2020) : https://doi.org/10.1186/s13395-020-00236-3  &
-  2. Oprescu et al., iScience (2020) : https://doi.org/10.1016/j.isci.2020.100993 
- in order to study **Virtual Secretome** of FAPs during regeneration and in homeostasis. 
+  1. [De Micheli et al.,Skeletal Muscle (2020)](https://doi.org/10.1186/s13395-020-00236-3)  &
+  2. [Oprescu et al., iScience (2020)](https://doi.org/10.1016/j.isci.2020.100993) \
+   in order to study **Virtual Secretome** of FAPs during regeneration and in homeostasis. 
  
 Other open-source tools used for the approach :
   - Outcyte : https://github.com/linlinzhao/outcyte
