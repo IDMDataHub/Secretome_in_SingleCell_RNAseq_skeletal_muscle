@@ -4,12 +4,16 @@ In this repository we propose an approach for extracting FAPs (Fibro-adipogenic 
   2. [Oprescu et al., iScience (2020)](https://doi.org/10.1016/j.isci.2020.100993) \
    in order to study **Virtual Secretome** of FAPs during regeneration and in homeostasis. 
  
-Other open-source tools used for the approach :
-  - Outcyte : https://github.com/linlinzhao/outcyte
-  - NicheNet : https://github.com/saeyslab/nichenetr
-  
 Our study is published here : \
 [**Negroni et al.,Muscle fibro-adipogenic progenitors from a single-cell perspective:Focus on their "virtual" secretome**]( https://doi.org/10.3389/fcell.2022.952041 )
+
+# Prerequisites 
+The open-source tools used for the approach :
+  - Outcyte : https://github.com/mariakondili/Zhao_Outcyte , a python-based tool, to be run in bash. Further dependencies noted in the repository's README.
+  - NicheNet : https://github.com/saeyslab/nichenetr ,as an R-package
+    > devtools::install_github("saeyslab/nichenetr") 
+    > library(nichenetr)) 
+  
 
 The Scripts should be used as follows: 
  > 1. analyse_with_Seurat.Rmd : analyse raw S.C.data published.Extract FAPs cells x FAPs markers table 
@@ -19,6 +23,8 @@ The Scripts should be used as follows:
  > 4. annotate_outcyte_results.R : \
  >   i. Add "GeneSymbol" column to results of Outcyte,that contain only EntrezID.\
  >   ii. Match the genes labelled as "Signal-peptide"/"UPS" with the expression data for focusing only on the secreted genes.
+ > 5. launch_NicheNet_faps.Rmd
+
 
 
 # License
