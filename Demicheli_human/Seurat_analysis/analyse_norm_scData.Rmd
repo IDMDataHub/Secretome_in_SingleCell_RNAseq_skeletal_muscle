@@ -1,0 +1,259 @@
+---
+title: "Analyse S.C.DeMicheli-human"
+author: "Maria Kondili"
+date: "23/05/2022"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r libraries }
+
+library(Seurat)
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(GEOquery)) # BiocManager::install("GEOquery")
+```
+
+##### Read data
+
+```{r data}
+
+work_dir <- "/shared/projects/single_cell_skeletal_muscle/DeMicheli/human/"
+
+setwd(paste0(work_dir,"Analyse_NormData_with_Seurat/"))
+
+####
+#### If Downloaded manually :
+####
+
+# data <- read.table(paste0(work_dir,"GSE143704/DeMicheli_HumanMuscleAtlas_normalizeddata.txt"),
+#                        sep="\t",header=TRUE,row.names=1)
+
+##> rownames = 1 : In the rownames are given the gene-symbols
+
+# metadata <- read.table(paste0(work_dir,"GSE143704/DeMicheli_HumanMuscleAtlas_metadata.txt"),
+#                        sep="\t",header=TRUE,row.names=1)
+# metadata <- metadata[,c(1:6)]
+
+
+####
+#### If you let GEOquery download it for you:
+####
+
+raw_file <- getGEOSuppFiles(GEO = "GSE143704",
+                            filter_regex="*_normalizeddata.txt.gz",
+                            baseDir=data_dir,
+                            fetch_files= TRUE)  # =FALSE for test
+
+
+metadatafile <- getGEOSuppFiles(GEO = "GSE143704", filter_regex="*_metadata.txt.gz", baseDir=data_dir, fetch_files= TRUE)
+metadata <- read_delim( rownames(metadatafile))
+metadata <- metadata[,c(1:6)]
+colnames(metadata) <- c("cellID","sampleID","nFeature_RNA","nCount_RNA","percent_mito","cell_annotation")
+
+
+```
+
+
+```{r create_seurat_obj }
+
+srat_data <- CreateSeuratObject(counts = data,
+                                 project = "human_muscle",
+                                 meta.data = metadata,
+                                 min.cells = 3,
+                                 min.features = 200)
+
+# i:
+# min.cells= sets the threshold for genes to only take the genes that are present in at least a specified number of cells.
+# min.features= sets the thresholds for cells that express at least a specified number of genes.
+
+
+```
+
+#### Verify Mito-count from  Normalised Data :
+
+```{r}
+
+srat_data[["percent_mito"]]  <- PercentageFeatureSet(srat_data, pattern ="^MT-")
+srat_data[["percent_rbp"]]   <- PercentageFeatureSet(srat_data, pattern ="^RP[SL]")
+srat_data[["percent_plt"]]   <- PercentageFeatureSet(srat_data, pattern = "^PPBP")
+
+VlnPlot(srat_data, features = c("percent_mito", "percent_rbp","percent_plt"), ncol = 3) +
+        theme(plot.title = element_text(size=15))
+
+```
+
+#### Find Variable Genes & apply PCA
+
+```{r}
+
+srat_data <- srat_data %>% ScaleData(features = rownames(srat_data)) %>%
+             FindVariableFeatures(selection.method = "vst",nfeatures = 2000) %>%
+             RunPCA(features = VariableFeatures(object = .), verbose=TRUE)
+
+
+#Warning messages:
+#1: In eval(predvars, data, env) : NaNs produced
+#2: In hvf.info$variance.expected[not.const] <- 10^fit$fitted :
+#  number of items to replace is not a multiple of replacement length
+
+```
+
+we see from Violin Plot that the mitoch.genes are filtered and normalised to 100%.
+
+
+#### Plot the most Variable Genes :
+
+```{r variable_features }
+
+most_var_genes <- VariableFeatures(object = srat_data)
+most_var_genes %>% length
+saveRDS(most_var_genes,"most_VariableFeatures.rds")
+
+
+top20 <- head(most_var_genes, 20)
+p <- VariableFeaturePlot(srat_data)
+
+LabelPoints(plot=p, points = top20, repel = TRUE, xnudge=0, ynudge=0)
+
+```
+
+#### Clustering
+
+```{r}
+
+srat_data <- FindNeighbors(srat_data, dims = 1:30)
+srat_data <- FindClusters(srat_data, resolution = 0.4)
+
+```
+
+#### UMAP Plot
+
+```{r umap_n_dimplot}
+
+srat_data <- RunUMAP(srat_data,
+                     reduction = "pca",
+                     dims = 1:30,
+                     n.components = 2L,
+                     verbose=TRUE)
+
+DimPlot(srat_data, reduction = "umap", label=TRUE,
+        pt.size = 0.5,label.size = 3,label.box = TRUE) +
+        theme(legend.position = "none") +
+        ggtitle("Human Muscle Clusters(DeMicheli)")
+
+```
+
+##### Give Names to Clusters and Plot:
+
+```{r annotate_clusters}
+
+Idents(srat_data) <- metadata$cell_annotation
+
+DimPlot(srat_data, reduction = "umap", label=TRUE,
+        pt.size = 0.5,label.size = 3,label.box = TRUE) +
+        theme(legend.position = "none") +
+        ggtitle("Human Muscle Clusters(DeMicheli)")
+
+
+# dittoSeq::dittoDimPlot(srat_data,
+#              var = "ident",
+#              reduction.use = "umap",
+#              do.label = T, labels.size = 3,
+#              legend.show =FALSE,
+#              main="Human Muscle Clusters(DeMicheli)")
+```
+
+#### Read Cell Counts per Cell-type :
+
+```{r counts_per_celltype}
+
+counts_per_ct <- metadata %>% group_by(cell_annotation) %>% count()
+## srat_data@meta.data %>% group_by(cell_annotation) %>% count()
+
+counts_per_ct
+
+##> SAVE:
+write_delim(counts_per_ct, file="cell_Counts_per_CellType.tsv",delim="\t", col_names=TRUE)
+
+```
+
+#### Extract only Fibroblasts subtypes samples
+
+```{r extract_one_cellType}
+
+samples_Fibro1 <- rownames(subset(metadata,cell_annotation=="COL1A1+ Fibroblasts") )
+samples_Fibro2 <- rownames(subset(metadata,cell_annotation=="DCN+ GSN+ MYOC+ Fibroblasts") )
+samples_Fibro3 <- rownames(subset(metadata,cell_annotation=="FBN1+ MFAP5+ CD55+ Fibroblasts") )
+
+samples_Fibro1 %>% length
+samples_Fibro2 %>% length
+samples_Fibro3 %>% length
+
+
+##> Counts only of these samples :
+srat_counts_fibro <- srat_data@assays$RNA@counts[,c(samples_Fibro1,samples_Fibro2,samples_Fibro3)]
+
+## For which genes ?
+srat_counts_fibro %>% rownames %>% length # 21701
+
+#saveRDS(srat_counts_fibro,"srat_counts_fibroblasts_3grp.rds")
+
+fibro_counts_var_genes <- srat_counts_fibro[most_var_genes,]
+
+
+```
+
+#### Find Markers of the Fibroblasts-subclusters
+
+```{r}
+
+fibro_col1a1_markers <- Seurat::FindMarkers(srat_data,
+                        ident.1=c("COL1A1+ Fibroblasts"),
+                        ident.2 = NULL, logfc.threshold = 0.25,
+                        only.pos = T,min.cells.feature = 3)
+
+##!! Attention: geneNames in Rownames -> not saved with "write_delim":
+fibro_col1a1_markers$GeneName <- rownames(fibro_col1a1_markers)
+
+write_delim(fibro_col1a1_markers, "Secretome/markers_of_COL1A1_fibroblasts_hs.tsv",col_names=T,delim="\t")
+
+fibro_myoc_markers <- Seurat::FindMarkers(srat_data, ident.1=c("DCN+ GSN+ MYOC+ Fibroblasts"),
+                       ident.2 = NULL, logfc.threshold = 0.25,
+                       only.pos = T,min.cells.feature = 3)
+fibro_myoc_markers$GeneName <- rownames(fibro_myoc_markers)
+
+write_delim(fibro_myoc_markers, "Secretome/markers_of_MYOC_fibroblasts_hs.tsv",col_names=T,delim="\t")
+
+
+fibro_fbn1_markers <- Seurat::FindMarkers(srat_data, ident.1=c("FBN1+ MFAP5+ CD55+ Fibroblasts"),
+                      ident.2 = NULL, logfc.threshold = 0.25,only.pos = T)
+
+fibro_fbn1_markers$GeneName <- rownames(fibro_fbn1_markers)
+write_delim(fibro_fbn1_markers, "Secretome/markers_of_FBN1_fibroblasts_hs.tsv",col_names=T,delim="\t")
+
+```
+
+#### Venn Diagram of 3 Fibroblasts subgroups :
+
+
+```{r venn_with_fibro_markers_subgroups}
+library(devtools)
+#devtools::install_github("yanlinlin82/ggvenn")
+library(ggvenn)
+
+ggvenn( list("COL1A1+"=fibro_col1a1_markers$GeneName,
+             "MYOC+"  =fibro_myoc_markers$GeneName,
+             "FBN1+"  =fibro_fbn1_markers$GeneName),
+        fill_color    = c("#0073C2FF", "#EFC000FF", "#868686FF", "#CD534CFF"),
+        stroke_size   = 0.5, set_name_size = 4,text_size = 4)
+
+```
+
+```{r}
+
+sessionInfo()
+
+```
