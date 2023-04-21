@@ -1,10 +1,11 @@
 #!/bin/bash
 
 workdir="Secretome_in_Single_Cell_RNAseq_skeletal_muscle"
-cd ${workdir}
-executable_dir="${workdir}/outcyte"
+executable_dir="${workdir}/outcyte_pkg"
 git clone https://github.com/mariakondili/Zhao_Outcyte ${executable_dir}
 #! Attention on the repo : The original on Linlinzhao/outcyte doesn't contain the modifications needed for the workflow
+cd ${executable_dir}
+
 
 ###
 ###> Create a conda-env for Outcyte
@@ -32,9 +33,9 @@ pepseqs_1=${outcyte_dir}/PepSeq_For_Outcyte/PepSeq_COL1A1_Fibro_Genes_human.fast
 pepseqs_2=${outcyte_dir}/PepSeq_For_Outcyte/PepSeq_FBN1_Fibro_Genes_human.fasta
 pepseqs_3=${outcyte_dir}/PepSeq_For_Outcyte/PepSeq_MYOC_Fibro_Genes_human.fasta
 
-python ${executable_dir}/run_outcyte.py ${pepseqs_1} outcyte  ${results_dir}
-python ${executable_dir}/run_outcyte.py ${pepseqs_2} outcyte  ${results_dir}
-python ${executable_dir}/run_outcyte.py ${pepseqs_3} outcyte  ${results_dir}
+python run_outcyte.py ${pepseqs_1} outcyte  ${results_dir}
+python run_outcyte.py ${pepseqs_2} outcyte  ${results_dir}
+python run_outcyte.py ${pepseqs_3} outcyte  ${results_dir}
 
 
 ## Note : results saved in "results/" folder, by default

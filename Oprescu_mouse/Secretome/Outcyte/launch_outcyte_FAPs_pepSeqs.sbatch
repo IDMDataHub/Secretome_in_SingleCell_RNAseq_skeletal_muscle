@@ -1,28 +1,33 @@
 #!/bin/bash
-#SBATCH -A single_cell_skeletal_muscle
-#SBATCH --mem 8G
-#SBATCH -o slurm.%j.out
 
+workdir="Secretome_in_Single_Cell_RNAseq_skeletal_muscle"
+executable_dir="${workdir}/outcyte_pkg"
 
+cd ${executable_dir}
 
-executable_dir="/home/Tools_Packages/Local_Install_OutCyte"
-workdir="/projects/single_cell_skeletal_muscle/Oprescu"
-cd ${workdir}
+git clone https://github.com/mariakondili/Zhao_Outcyte ${executable_dir}
+#! Attention on the repo : The original on Linlinzhao/outcyte doesn't contain the modifications needed for the workflow
 
-module load conda
-CONDA_ROOT="/shared/software/miniconda"
-source ${CONDA_ROOT}/etc/profile.d/conda.sh
-conda activate /shared/home/mkondili/.conda/envs/outcyte
+###
+###> Create a conda-env for Outcyte
+###
 
-module load python/3.7
+conda create -n outcyte
+conda activate outcyte # should be in /home/.conda/envs/
 
-fasta_dir=${workdir}/Secretome/PepSeq_For_Outcyte
-results_dir=${workdir}/Secretome/Outcyte_Results/
+##
+##> Define directories
+##
 
+fasta_dir=${workdir}/Secretome/Outcyte/PepSeq_For_Outcyte
+results_dir=${workdir}/Secretome/Outcyte/Results/
 mkdir -p ${results_dir}
 
-## TO RUN:python run_outcyte.py  /path/to/your/fasta/file  /outcyte-sp/or/outcyte-ups/or/outcyte
+###
+###> RUN
+###
 
+#python run_outcyte.py  /path/to/your/fasta/file  /outcyte-sp/outcyte-ups/outcyte
 
 ##  mouse-genes Pep-seqs
 
@@ -41,10 +46,10 @@ pepseqs_fibro="${fasta_dir}/PepSeq_FibroMarkers_Oprescu.fasta"
 ## mv ${new_f}_clean.fasta ${f}
 
 
-python ${executable_dir}/run_outcyte_edMK.py ${pepseqs_faps}  outcyte  ${results_dir}
+python run_outcyte.py ${pepseqs_faps}  outcyte  ${results_dir}
 
-python ${executable_dir}/run_outcyte_edMK.py ${pepseqs_fibro}  outcyte  ${results_dir}
+python run_outcyte.py ${pepseqs_fibro}  outcyte  ${results_dir}
 
 
 ## results saved in "results/" folder, by default
-## Note: run_outcyte.py --> modified to _edMK, by adding a custom results_folder in user-input-arguments
+## Note: run_outcyte.py --> modified, by adding a custom results_folder in user-input-arguments
