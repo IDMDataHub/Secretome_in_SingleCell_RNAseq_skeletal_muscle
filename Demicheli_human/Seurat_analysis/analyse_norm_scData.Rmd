@@ -20,12 +20,12 @@ suppressPackageStartupMessages(library(GEOquery)) # BiocManager::install("GEOque
 
 ```{r data}
 
-work_dir <- "/shared/projects/single_cell_skeletal_muscle/DeMicheli/human/"
+work_dir <- "Secretome_in_SingleCell_RNAseq_skeletal_muscle/DeMicheli_human/"
 
-setwd(paste0(work_dir,"Analyse_NormData_with_Seurat/"))
+setwd(paste0(work_dir,"Seurat_analysis/"))
 
 ####
-#### If Downloaded manually :
+#### If Data Downloaded manually :
 ####
 
 # data <- read.table(paste0(work_dir,"GSE143704/DeMicheli_HumanMuscleAtlas_normalizeddata.txt"),
@@ -39,27 +39,33 @@ setwd(paste0(work_dir,"Analyse_NormData_with_Seurat/"))
 
 
 ####
-#### If you let GEOquery download it for you:
+#### If you let GEOquery download data for you:
 ####
 
-raw_file <- getGEOSuppFiles(GEO = "GSE143704",
+data_dir <- paste0(work_dir,"Data/")
+dir.create(data_dir,showWarnings=F)
+
+data_file <- getGEOSuppFiles(GEO = "GSE143704",
                             filter_regex="*_normalizeddata.txt.gz",
                             baseDir=data_dir,
                             fetch_files= TRUE)  # =FALSE for test
 
+norm_data <- readr::read_delim(rownames(data_file)) #  read_delim(gzfile(rownames(data_file)))
+norm_data %>% dim()
 
 metadatafile <- getGEOSuppFiles(GEO = "GSE143704", filter_regex="*_metadata.txt.gz", baseDir=data_dir, fetch_files= TRUE)
-metadata <- read_delim( rownames(metadatafile))
+metadata <- readr::read_delim( rownames(metadatafile))
 metadata <- metadata[,c(1:6)]
 colnames(metadata) <- c("cellID","sampleID","nFeature_RNA","nCount_RNA","percent_mito","cell_annotation")
 
+metadata %>% dim()
 
 ```
 
 
 ```{r create_seurat_obj }
 
-srat_data <- CreateSeuratObject(counts = data,
+srat_data <- CreateSeuratObject(counts = norm_data,
                                  project = "human_muscle",
                                  meta.data = metadata,
                                  min.cells = 3,
@@ -93,11 +99,6 @@ srat_data <- srat_data %>% ScaleData(features = rownames(srat_data)) %>%
              FindVariableFeatures(selection.method = "vst",nfeatures = 2000) %>%
              RunPCA(features = VariableFeatures(object = .), verbose=TRUE)
 
-
-#Warning messages:
-#1: In eval(predvars, data, env) : NaNs produced
-#2: In hvf.info$variance.expected[not.const] <- 10^fit$fitted :
-#  number of items to replace is not a multiple of replacement length
 
 ```
 
@@ -157,7 +158,7 @@ DimPlot(srat_data, reduction = "umap", label=TRUE,
         theme(legend.position = "none") +
         ggtitle("Human Muscle Clusters(DeMicheli)")
 
-
+## other way :
 # dittoSeq::dittoDimPlot(srat_data,
 #              var = "ident",
 #              reduction.use = "umap",
@@ -177,32 +178,6 @@ counts_per_ct
 
 ##> SAVE:
 write_delim(counts_per_ct, file="cell_Counts_per_CellType.tsv",delim="\t", col_names=TRUE)
-
-```
-
-#### Extract only Fibroblasts subtypes samples
-
-```{r extract_one_cellType}
-
-samples_Fibro1 <- rownames(subset(metadata,cell_annotation=="COL1A1+ Fibroblasts") )
-samples_Fibro2 <- rownames(subset(metadata,cell_annotation=="DCN+ GSN+ MYOC+ Fibroblasts") )
-samples_Fibro3 <- rownames(subset(metadata,cell_annotation=="FBN1+ MFAP5+ CD55+ Fibroblasts") )
-
-samples_Fibro1 %>% length
-samples_Fibro2 %>% length
-samples_Fibro3 %>% length
-
-
-##> Counts only of these samples :
-srat_counts_fibro <- srat_data@assays$RNA@counts[,c(samples_Fibro1,samples_Fibro2,samples_Fibro3)]
-
-## For which genes ?
-srat_counts_fibro %>% rownames %>% length # 21701
-
-#saveRDS(srat_counts_fibro,"srat_counts_fibroblasts_3grp.rds")
-
-fibro_counts_var_genes <- srat_counts_fibro[most_var_genes,]
-
 
 ```
 
