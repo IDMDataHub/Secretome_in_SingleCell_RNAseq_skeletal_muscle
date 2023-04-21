@@ -12,9 +12,8 @@ prepare_seq_Outcyte <- function( my_input_genes,
 
     #listMarts()
     ensembl = useMart("ensembl")
-    ensembl = useDataset(org_dataset,mart=ensembl) ##Mouse genes (GRCm38.p6)
-    #
-    # continue with human ...
+    ensembl = useDataset(org_dataset,mart=ensembl)
+
     filters = listFilters(ensembl)
     attributes_bm <- c("peptide",
                        "entrezgene_id",
@@ -46,7 +45,7 @@ prepare_seq_Outcyte <- function( my_input_genes,
 
     # listFilters(ensembl.hs )$name --> to find filter of gene-name-format you give ,e.g : external_gene_name, ensembl_gene_id
 
-    timeout(100000) ##La requête getSequence ou getBM demande bcp de temps,pour qu'il ne soit pas interrompu !
+    timeout(100000) ##for giving time to getBM
 
     protein_bm <- getBM(attributes = attributes_bm, # what you want to get
                         filters = "entrezgene_id",  # db of ID  you give
@@ -88,19 +87,5 @@ prepare_seq_Outcyte <- function( my_input_genes,
 }
 
 
-###> For saving in FASTA:
-###> create the files of 100 sequences :
-## dir.create(out_dir,showWarnings=F) ## Creates the new folder, w/o warning if already exists.
-
-
 ##> if we want to define number of elements of array=number of fasta created :
 ##> length.out = total number of fasta created
-
-# otherwise :by 100s:
-# steps = seq(1, length(PepSeqs$Peptide)
-# for( i in steps ){
-#   j = i+99
-#   PepSeq_x <- PepSeqs[i:j, ]
-#   slice = paste0(i,"_to_",j)
-#   exportFASTA(PepSeq_x, paste0(out_dir , suffix_outfile, slice, ".fasta"))
-# }
