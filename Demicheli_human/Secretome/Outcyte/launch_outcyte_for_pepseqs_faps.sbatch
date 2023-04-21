@@ -5,12 +5,17 @@
 #SBATCH -o slurm.outcyte.%j.out
 
 executable_dir="/home/Tools_Packages/Local_Install_OutCyte"
-workdir="/projects/single_cell_skeletal_muscle/DeMicheli_human/Secretome"
+#git clone https://github.com/mariakondili/Zhao_Outcyte ${executable_dir}
+
+workdir="Secretome_in_Single_Cell_skeletal_muscle/DeMicheli_human/Secretome"
 cd ${workdir}
 
+#> Create a conda-env for Outcyte
 module load conda
 CONDA_ROOT="/shared/software/miniconda"
 source ${CONDA_ROOT}/etc/profile.d/conda.sh
+
+conda create -n outcyte
 conda activate /home/.conda/envs/outcyte
 
 module load python/3.7
