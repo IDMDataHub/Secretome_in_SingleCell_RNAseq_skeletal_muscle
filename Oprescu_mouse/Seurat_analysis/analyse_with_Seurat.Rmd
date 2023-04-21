@@ -15,11 +15,36 @@ library(tidyverse)
 library(SingleR)
 library(celldex)
 library(RColorBrewer)
+library(GEOquery) # BiocManager::install("GEOquery")
 ```
 
 ```{r input_data}
-regen_data <- readRDS("GSE138826/GSE138826_regen_data.rds")
-#>> .@ data             :'data.frame':	18658 obs. of  53193 variables:
+
+work_dir <- "Secretome_in_Single_Cell_RNAseq_skeletal_muscle/Oprescu_mouse/"
+setwd(work_dir)
+
+data_dir <- paste0(work_dir,"GSE138826/")
+dir.create(data_dir, showWarnings=F)
+
+###
+###> If downloaded with GEOquery :
+###
+
+dir.create("GSE138826/")
+#> get file
+regen_file <- getGEOSuppFiles(GEO="GSE138826",filter_regex="_regen_data.rds.gz", baseDir="GSE138826/", fetch_files= TRUE)
+#> unzip
+regen_file_unz <-  str_remove(rownames(regen_file), ".gz")
+unzipped_file <- gunzip(rownames(regen_file),destname=regen_file_unz, remove = FALSE)
+## read it
+regen_data <- readRDS(unzipped_file)
+
+###
+###> If downloaded manually:
+###
+#regen_data <- readRDS(paste0(work_dir,"GSE138826/GSE138826_regen_data.rds"))
+
+#>> regen_data@data  :'data.frame':	18658 obs. of  53193 variables:
 #$RNA : contains the RNA counts
 #$SCT: contains the SCT normalized values. Columns are the samples, rows are genes
 
@@ -323,7 +348,7 @@ ggplot(cell_count_per_ct_and_tp_df, aes(x=timepoint, y=count, fill=cell_type)) +
 ####
 
 ```{r}
-secretome_dir <- "Secretome/Outcyte_Results/"
+secretome_dir <- paste0(work_dir,"Secretome/Outcyte/Results/")
 
 outcyte_res <- read_delim(paste0(secretome_dir, "Outcyte_predictions_FAPsMarkers_with_GeneName.tsv"),
                          delim="\t",col_names=T)
@@ -401,7 +426,7 @@ write_delim(SecretedFaps_kmeans_clusters,
 #### GO-terms of Secreted-Genes per Cluster
 ####
 
-source("~/myScriptsBank/Barplot_with_GOterms_mm.R")
+source(paste0(work_dir,"functions/create_barplot_with_GOterms_mm.R"))
 ##> Saves images in folder : Plots/
 
 create_barplot_GOterms.mm(subset(SecretedFaps_kmeans_clusters, cluster == 1)$geneName,
