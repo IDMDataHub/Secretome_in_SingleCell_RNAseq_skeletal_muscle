@@ -8,6 +8,8 @@ Our study is published here : \
 [**Negroni et al.,Muscle fibro-adipogenic progenitors from a single-cell perspective:Focus on their "virtual" secretome**]( https://doi.org/10.3389/fcell.2022.952041 )
 
 # Prerequisites 
+The scripts were run in R/4.1.1, with Seurat/4.1.1, on CentOS Linux 7(64-bit).
+
 The open-source tools used for the approach :
   - Outcyte : https://github.com/mariakondili/Zhao_Outcyte , a python-based tool, to be run in bash. Further dependencies noted in the repository's README.
   - NicheNet : https://github.com/saeyslab/nichenetr ,as an R-package
