@@ -22,7 +22,7 @@ source(paste0(work_dir,"functions/convert_GeneIds.R")
 ###> All FAPs:
 
 
-outcyte_faps <- readr::read_delim(paste0(outcyte_dir,"Results/PepSeq_FAPsMarkers_Oprescu_pipeline.txt"),col_names=F)
+outcyte_faps <- readr::read_delim(paste0(outcyte_dir,"Results/PepSeq_FAPsMarkers_Oprescu_outcyte-pipeline.txt"),col_names=F)
 colnames(outcyte_faps) <- c("EntrezID","Prediction","Score")
 
 outcyte_faps$GeneSymbol  <- convert_gene_ids.mm(id_list=as.character(outcyte_faps$EntrezID),from="ENTREZID",to="SYMBOL")
@@ -33,7 +33,7 @@ write_delim(outcyte_faps,
 
 ###> Fibroblasts :
 
-outcyte_fibro <- readr::read_delim(paste0(outcyte_dir,"Results/PepSeq_FibroMarkers_Oprescu_pipeline.txt"),col_names=F)
+outcyte_fibro <- readr::read_delim(paste0(outcyte_dir,"Results/PepSeq_FibroMarkers_Oprescu_outcyte-pipeline.txt"),col_names=F)
 colnames(outcyte_fibro) <- c("EntrezID","Prediction","Score")
 
 outcyte_fibro$GeneSymbol  <- convert_gene_ids.mm(as.character(outcyte_fibro$EntrezID),from="ENTREZID",to="SYMBOL")
